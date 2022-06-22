@@ -1,0 +1,158 @@
+---
+title: "WikiData Processing: European Biographical Data"
+author: "Julia Ulziisaikhan"
+date: "6/15/2022"
+output: 
+  md_document:
+    variant: markdown_github
+---
+
+```{r, warning=F, error=F}
+library(tidyverse)
+library(ggplot2)
+library(readxl)
+library(janitor)
+path <- "C:/Users/ulzii/OneDrive/Documents/spring22/tuttle/wikidata_analysis"
+setwd(path)
+```
+
+# Data Processing
+
+Our lifespan column is calculated from subtracting the person's birth year from the death year. We exclude persons with lifespans less than 0.
+
+```{r}
+#functions
+blank2na <- function(field){
+  output <- ifelse(field=="", NA, field)
+  return(output)
+}
+
+raw2df <- function(dat){
+  df <- 
+    dat %>%
+    clean_names() %>%
+    mutate(age = yod - yob,
+           occupation_label=blank2na(occupation_label),
+           citizen_label=blank2na(citizen_label),
+           birthcountry_label = blank2na(birthcountry_label)
+           ) %>%
+    filter(!is.na(age)) %>%
+    filter(age>=0) %>%
+    group_by(item) %>%
+    slice(1) %>%
+    ungroup() %>%
+    relocate(age, .after=yod) %>%
+    relocate(item, .after=birthcountry_label) %>%
+    arrange(yob) 
+  return(df)
+}
+```
+
+
+```{r}
+#load in data
+france <- read.csv("data/france_query.csv")
+germany <- read.csv("data/germany_query.csv")
+russia <- read.csv("data/russia_query.csv")
+italy <- read.csv("data/italy_query.csv")
+uk <- read.csv("data/uk_query.csv")
+spain <- read.csv("data/spain_query.csv")
+greece <- read.csv("data/greece_query.csv")
+portugal <- read.csv("data/portugal_query.csv")
+```
+
+```{r}
+df <- rbind(raw2df(france),
+            raw2df(germany),
+            raw2df(russia),
+            raw2df(italy),
+            raw2df(uk),
+            raw2df(spain),
+            raw2df(greece),
+            raw2df(portugal))
+```
+
+```{r}
+colnames(raw2df(france))
+```
+
+We remove the country of citizenship column and instead assign country of birth as the person's associated country. `id` refers to the WikiData link for the given person's entry. 
+
+```{r}
+df$citizen_label <- NULL
+colnames(df) <- c("name", "birth", "death", "lifespan", "occupation", "country", "id")
+df$dataset <- "wikidata"
+head(df)
+```
+
+# Exporting Data to .csv
+
+```{r}
+write.csv(df,"wikidata_processed.csv", row.names = FALSE)
+```
+
+
+# Data Quality and Exploration
+
+```{r}
+dim(df)
+range(df$birth)
+range(df$death)
+range(df$lifespan)
+```
+
+There are 2,921 persons in our European persons data set. The minimum and maximum values for the birth year column are -800 and 2010, and -760 and 2038 for the death year column. The quality of the data is questionable, as there is a person with a death year of 2038, which is not in the past. In addition, I display the entries with a lifespan of 0 below. The birth and death years for most of them seem too conveniently located at the start of each century, and their birth and death year information is questionable as the occupations indicate they should at least be adults or children, not persons of lifespan of 0 years.
+
+```{r}
+filter(df, lifespan==0)
+```
+
+There are 421 different occupations in the dataset. The most common ones are painter, actor, Catholic priest, military personnel, and politician. The possibility of overlap between the occupation labels, or synonymous terms, have not been explored here (eg. I noticed the labels "priest" and "Catholic priest" in the data) 
+
+```{r}
+length(unique(df$occupation))
+```
+
+```{r}
+df %>% 
+  filter(!is.na(occupation)) %>%
+  group_by(occupation) %>%
+  summarise(count = n()) %>%
+  arrange(-count) %>%
+  top_n(n = 5, wt = count)
+```
+
+The majority of the persons come from (more specifically, were born in) Germany, France, and the UK.
+
+```{r}
+df %>% 
+  group_by(country) %>%
+  summarise(count = n()) %>%
+  arrange(-count) %>%
+  top_n(n = 8, wt = count)
+```
+
+# Example Plot
+
+A scatter plot of the data, with a moving average line in blue. We limit the x-axis to [1500,2022] as most of the data is concentrated in that timeframe. We limit the upper bound to 120, as lifespans above 120 may seem nonsensical. 
+
+A horizontal strip of deaths can be noticed around the time of World War 2. The European longevity trend appears to be relatively flat around 55-60 years from 1500 to 1950. After 1950, the average longevity increases to a peak of around 75, but appears to flatten around the new millenia.
+
+```{r}
+plot <- 
+  ggplot(data=df, aes(x=death, y=lifespan)) +
+  geom_point(alpha=0.2) +
+  ggtitle("European Lifespans") +
+  theme_bw()  +
+  ylab("Lifespan") +
+  scale_x_continuous(breaks = seq(-800, max(df$death), 200), name = "Year of Death")
+```
+
+```{r, warning=F, message=F}
+plot + 
+  scale_x_continuous(breaks = seq(1000, 2000, 100), limits=c(1500,2022), name = "Year of Death") +
+  scale_y_continuous(breaks = seq(0, 120, 10), limits=c(0,120)) +
+  geom_smooth(method="loess", se = FALSE) + 
+  labs(caption = "Lifespan [0, 120]\nYear of Death [1500, 2000]")
+```
+
